@@ -1,0 +1,5 @@
+flask
+selenium
+requests
+beautifulsoup4
+webdriver-manager

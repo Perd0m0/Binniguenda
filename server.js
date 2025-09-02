@@ -170,7 +170,7 @@ function formatCurrencyMXN(n) {
 }
 
 function buildContentString(habitaciones) {
-  const lines = ["Productos:"];
+  const lines = ["Habitaciones disponibles:"];
   if (!Array.isArray(habitaciones) || habitaciones.length === 0) {
     lines.push("Sin disponibilidad.");
     return lines.join("\n");
@@ -206,7 +206,7 @@ app.get("/consultar", async (req, res) => {
         messages: [
           {
             type: "to_user",
-            content: 'Productos:\nError: Parámetros requeridos: check_in y check_out (YYYY-MM-DD)',
+            content: 'Habitaciones disponibles:\nError: Parámetros requeridos: check_in y check_out (YYYY-MM-DD)',
           },
         ],
       });
@@ -218,7 +218,7 @@ app.get("/consultar", async (req, res) => {
         messages: [
           {
             type: "to_user",
-            content: "Productos:\nError: La fecha de salida debe ser posterior a la fecha de entrada",
+            content: "Habitaciones disponibles:\nError: La fecha de salida debe ser posterior a la fecha de entrada",
           },
         ],
       });

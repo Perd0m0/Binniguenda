@@ -180,7 +180,6 @@ function buildContentString(habitaciones) {
     const total = formatCurrencyMXN(h.precio_total);
     const porNoche = formatCurrencyMXN(h.precio_por_noche);
     const tipoTxt = h.tipo ? ` | Tipo: ${h.tipo}` : "";
-    const dispTxt = h.disponibles ? ` | ${h.disponibles} disp.` : "";
     lines.push(
       `${i + 1}. ${h.habitacion}${tipoTxt}${dispTxt} | Total: ${total} | Por noche: ${porNoche}`
     );

@@ -16,9 +16,6 @@ const UA =
 
 // ScrapingBee: usa este endpoint oficial
 const SCRAPINGBEE_ENDPOINT = "https://app.scrapingbee.com/api/v1/";
-// (algunas guías usan https://api.scrapingbee.com/v1, ambos funcionan;
-// si uno te diera problema, prueba el otro)
-
 // Lee API key desde env
 const SCRAPINGBEE_API_KEY = process.env.SCRAPINGBEE_API_KEY;
 const useScraper = Boolean(SCRAPINGBEE_API_KEY);
@@ -66,7 +63,6 @@ async function fetchSearchHtml(targetUrl) {
     Referer: LANDING,
   };
 
-  // IMPORTANTE: pasar la URL "cruda"; axios se encarga del encoding
   const urlParam = targetUrl;
 
   if (useScraper) {
@@ -75,31 +71,25 @@ async function fetchSearchHtml(targetUrl) {
         params: {
           api_key: SCRAPINGBEE_API_KEY,
           url: urlParam,
-          // Opciones útiles
           render_js: "false",
           premium_proxy: "true",
-          // forward_headers incluye nuestros headers al sitio objetivo
           forward_headers: "true",
         },
         headers,
         timeout: 30000,
-        validateStatus: () => true, // queremos capturar cuerpo en 4xx/5xx
+        validateStatus: () => true,
       });
 
-      // Si la API respondió error, propágalo con detalle
       if (typeof data === "object" && data && (data.status || data.error)) {
         const status = data.status || 500;
         const msg = data.error || data.message || JSON.stringify(data).slice(0, 300);
         throw new Error(`Scraper error ${status}: ${msg}`);
       }
-      // Algunos errores vienen con status HTTP
       if (typeof data === "string") {
         return data;
       }
-      // Si no es string, devuelve stringificado
       return String(data);
     } catch (e) {
-      // Axios error con response: muestra status y cuerpo
       if (e.response) {
         const body =
           typeof e.response.data === "string"
@@ -110,7 +100,6 @@ async function fetchSearchHtml(targetUrl) {
       throw e;
     }
   } else {
-    // Petición directa (funcionará en tu PC; en Koyeb puede devolver vacío)
     const { data } = await axios.get(urlParam, {
       headers,
       timeout: 30000,
@@ -119,6 +108,7 @@ async function fetchSearchHtml(targetUrl) {
   }
 }
 
+// --------- Parsing ----------
 function parseRooms(html, noches) {
   const $ = cheerio.load(html);
   const rooms = $(".room");
@@ -129,6 +119,14 @@ function parseRooms(html, noches) {
       $(el).find(".room-header-name h2").first().text().trim() ||
       $(el).find(".room-header-name h3").first().text().trim();
     const room_name = nameTag || "N/A";
+
+    // Intentar obtener el "tipo" o nombre de la tarifa si existe
+    const tipo =
+      $(el).find(".rates .line .rate-name").first().text().trim() ||
+      $(el).find(".rates .line .name").first().text().trim() ||
+      $(el).find(".rate .name").first().text().trim() ||
+      $(el).find(".board_name, .board, .rate_title").first().text().trim() ||
+      "";
 
     const priceAttr =
       $(el).find(".rates .line[data-amount]").attr("data-amount") ||
@@ -154,6 +152,7 @@ function parseRooms(html, noches) {
     if (Number.isFinite(count) && count > 0) {
       results.push({
         habitacion: room_name,
+        tipo: tipo || undefined,
         precio_total: room_price_total,
         precio_por_noche,
         disponibles: String(count),
@@ -162,6 +161,32 @@ function parseRooms(html, noches) {
   });
 
   return results;
+}
+
+// --------- Helpers de formateo ----------
+function formatCurrencyMXN(n) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "N/A";
+  return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 2 }).format(n);
+}
+
+function buildContentString(habitaciones) {
+  const lines = ["Productos:"];
+  if (!Array.isArray(habitaciones) || habitaciones.length === 0) {
+    lines.push("Sin disponibilidad.");
+    return lines.join("\n");
+  }
+
+  habitaciones.forEach((h, i) => {
+    const total = formatCurrencyMXN(h.precio_total);
+    const porNoche = formatCurrencyMXN(h.precio_por_noche);
+    const tipoTxt = h.tipo ? ` | Tipo: ${h.tipo}` : "";
+    const dispTxt = h.disponibles ? ` | ${h.disponibles} disp.` : "";
+    lines.push(
+      `${i + 1}. ${h.habitacion}${tipoTxt}${dispTxt} | Total: ${total} | Por noche: ${porNoche}`
+    );
+  });
+
+  return lines.join("\n");
 }
 
 // --------- Rutas ----------
@@ -177,30 +202,56 @@ app.get("/consultar", async (req, res) => {
     const edades_ninos = (edades_raw.match(/\d+/g) || []).map((x) => parseInt(x, 10));
 
     if (!check_in || !check_out) {
-      return res.status(400).json({ error: "Parámetros requeridos: check_in y check_out (YYYY-MM-DD)" });
+      return res.status(400).json({
+        messages: [
+          {
+            type: "to_user",
+            content: 'Productos:\nError: Parámetros requeridos: check_in y check_out (YYYY-MM-DD)',
+          },
+        ],
+      });
     }
 
     const noches = nightsBetween(check_in, check_out);
     if (!(noches > 0)) {
-      return res.status(400).json({ error: "La fecha de salida debe ser posterior a la fecha de entrada" });
+      return res.status(400).json({
+        messages: [
+          {
+            type: "to_user",
+            content: "Productos:\nError: La fecha de salida debe ser posterior a la fecha de entrada",
+          },
+        ],
+      });
     }
 
     const targetUrl = buildTargetUrl(check_in, check_out, adultos, ninos, edades_ninos);
-    const html = await fetchSearchHtml(targetUrl); // << sin encodeURI
+    const html = await fetchSearchHtml(targetUrl);
 
     const habitaciones = parseRooms(html, noches);
 
-    const agesParam = [...Array(adultos).fill(30), ...edades_ninos].join(",");
-    const link_busqueda =
-      `https://binniguendahuatulco.bookinweb.es/es/booking/process/room?` +
-      `date_from=${check_in}&date_to=${check_out}&ad=${adultos}&ch=${ninos}&ages=${agesParam}`;
-
-    res.json({ habitaciones, link_busqueda });
+    // Construir el JSON EXACTO solicitado
+    const content = buildContentString(habitaciones);
+    return res.json({
+      messages: [
+        {
+          type: "to_user",
+          content,
+        },
+      ],
+    });
   } catch (err) {
-    // Muestra detalle del error del scraper si existe
-    res.status(502).json({
-      error: String(err?.message || err),
-      hint: useScraper ? "Revisa SCRAPINGBEE_API_KEY y saldo/plan en ScrapingBee." : "Sin API de scraper: en Koyeb puede devolver vacío.",
+    return res.status(502).json({
+      messages: [
+        {
+          type: "to_user",
+          content:
+            "Productos:\nError al consultar disponibilidad.\n" +
+            String(err?.message || err) +
+            (useScraper
+              ? "\nHint: Revisa SCRAPINGBEE_API_KEY y saldo/plan en ScrapingBee."
+              : "\nHint: Sin API de scraper: en Koyeb puede devolver vacío."),
+        },
+      ],
     });
   }
 });

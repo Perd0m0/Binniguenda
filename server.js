@@ -16,7 +16,6 @@ const UA =
 
 // ScrapingBee: usa este endpoint oficial
 const SCRAPINGBEE_ENDPOINT = "https://app.scrapingbee.com/api/v1/";
-// Lee API key desde env
 const SCRAPINGBEE_API_KEY = process.env.SCRAPINGBEE_API_KEY;
 const useScraper = Boolean(SCRAPINGBEE_API_KEY);
 
@@ -63,14 +62,12 @@ async function fetchSearchHtml(targetUrl) {
     Referer: LANDING,
   };
 
-  const urlParam = targetUrl;
-
   if (useScraper) {
     try {
       const { data } = await axios.get(SCRAPINGBEE_ENDPOINT, {
         params: {
           api_key: SCRAPINGBEE_API_KEY,
-          url: urlParam,
+          url: targetUrl,
           render_js: "false",
           premium_proxy: "true",
           forward_headers: "true",
@@ -85,9 +82,6 @@ async function fetchSearchHtml(targetUrl) {
         const msg = data.error || data.message || JSON.stringify(data).slice(0, 300);
         throw new Error(`Scraper error ${status}: ${msg}`);
       }
-      if (typeof data === "string") {
-        return data;
-      }
       return String(data);
     } catch (e) {
       if (e.response) {
@@ -100,7 +94,7 @@ async function fetchSearchHtml(targetUrl) {
       throw e;
     }
   } else {
-    const { data } = await axios.get(urlParam, {
+    const { data } = await axios.get(targetUrl, {
       headers,
       timeout: 30000,
     });
@@ -120,7 +114,6 @@ function parseRooms(html, noches) {
       $(el).find(".room-header-name h3").first().text().trim();
     const room_name = nameTag || "N/A";
 
-    // Intentar obtener el "tipo" o nombre de la tarifa si existe
     const tipo =
       $(el).find(".rates .line .rate-name").first().text().trim() ||
       $(el).find(".rates .line .name").first().text().trim() ||
@@ -148,14 +141,16 @@ function parseRooms(html, noches) {
       $(el).find(".availability .remaining span").first().text().trim() ||
       "0";
 
-    const count = parseInt(availableText.replace(/[^\d]/g, ""), 10);
-    if (Number.isFinite(count) && count > 0) {
+    const count = parseInt(availableText.replace(/[^\d]/g, ""), 10) || 0;
+
+    // 👇 Mostrar si tiene disponibilidad O si es Standard Doble
+    if (count > 0 || room_name.toLowerCase().includes("standard doble")) {
       results.push({
         habitacion: room_name,
         tipo: tipo || undefined,
         precio_total: room_price_total,
         precio_por_noche,
-        //disponibles: String(count),
+        disponibles: String(count),
       });
     }
   });
@@ -163,10 +158,14 @@ function parseRooms(html, noches) {
   return results;
 }
 
-// --------- Helpers de formateo ----------
+// --------- Helpers ----------
 function formatCurrencyMXN(n) {
   if (typeof n !== "number" || !Number.isFinite(n)) return "N/A";
-  return new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 2 }).format(n);
+  return new Intl.NumberFormat("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    maximumFractionDigits: 2,
+  }).format(n);
 }
 
 function buildContentString(habitaciones) {
@@ -190,7 +189,9 @@ function buildContentString(habitaciones) {
 }
 
 // --------- Rutas ----------
-app.get("/health", (_, res) => res.json({ ok: true, useScraper, endpoint: SCRAPINGBEE_ENDPOINT }));
+app.get("/health", (_, res) =>
+  res.json({ ok: true, useScraper, endpoint: SCRAPINGBEE_ENDPOINT })
+);
 
 app.get("/consultar", async (req, res) => {
   try {
@@ -199,14 +200,17 @@ app.get("/consultar", async (req, res) => {
     const adultos = parseIntSafe(req.query.adultos, 2);
     const ninos = parseIntSafe(req.query.ninos, 0);
     const edades_raw = String(req.query.edades_ninos || "");
-    const edades_ninos = (edades_raw.match(/\d+/g) || []).map((x) => parseInt(x, 10));
+    const edades_ninos = (edades_raw.match(/\d+/g) || []).map((x) =>
+      parseInt(x, 10)
+    );
 
     if (!check_in || !check_out) {
       return res.status(400).json({
         messages: [
           {
             type: "to_user",
-            content: 'Habitaciones disponibles:\nError: Parámetros requeridos: check_in y check_out (YYYY-MM-DD)',
+            content:
+              "Habitaciones disponibles:\nError: Parámetros requeridos: check_in y check_out (YYYY-MM-DD)",
           },
         ],
       });
@@ -218,19 +222,25 @@ app.get("/consultar", async (req, res) => {
         messages: [
           {
             type: "to_user",
-            content: "Habitaciones disponibles:\nError: La fecha de salida debe ser posterior a la fecha de entrada",
+            content:
+              "Habitaciones disponibles:\nError: La fecha de salida debe ser posterior a la fecha de entrada",
           },
         ],
       });
     }
 
-    const targetUrl = buildTargetUrl(check_in, check_out, adultos, ninos, edades_ninos);
+    const targetUrl = buildTargetUrl(
+      check_in,
+      check_out,
+      adultos,
+      ninos,
+      edades_ninos
+    );
     const html = await fetchSearchHtml(targetUrl);
 
     const habitaciones = parseRooms(html, noches);
-
-    // Construir el JSON EXACTO solicitado
     const content = buildContentString(habitaciones);
+
     return res.json({
       messages: [
         {
@@ -276,12 +286,11 @@ app.get("/debug", async (req, res) => {
     });
   } catch (e) {
     const status = e?.response?.status;
-    const body =
-      e?.response?.data
-        ? typeof e.response.data === "string"
-          ? e.response.data.slice(0, 500)
-          : JSON.stringify(e.response.data).slice(0, 500)
-        : undefined;
+    const body = e?.response?.data
+      ? typeof e.response.data === "string"
+        ? e.response.data.slice(0, 500)
+        : JSON.stringify(e.response.data).slice(0, 500)
+      : undefined;
     res.status(500).json({ error: String(e?.message || e), status, body });
   }
 });

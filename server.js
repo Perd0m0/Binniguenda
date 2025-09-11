@@ -149,7 +149,6 @@ function parseRooms(html, noches) {
         tipo: tipo || undefined,
         precio_total: room_price_total,
         precio_por_noche,
-        disponibles: String(count),
       });
     }
   });

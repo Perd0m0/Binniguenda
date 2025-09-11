@@ -143,7 +143,6 @@ function parseRooms(html, noches) {
 
     const count = parseInt(availableText.replace(/[^\d]/g, ""), 10) || 0;
 
-    // 👇 Mostrar si tiene disponibilidad O si es Standard Doble
     if (count > 0 || room_name.toLowerCase().includes("standard doble")) {
       results.push({
         habitacion: room_name,
@@ -199,10 +198,16 @@ app.get("/consultar", async (req, res) => {
     const check_out = String(req.query.check_out || "");
     const adultos = parseIntSafe(req.query.adultos, 2);
     const ninos = parseIntSafe(req.query.ninos, 0);
+
+    // 👇 Nuevo: autocompletar edades de niños si faltan
+    let edades_ninos = [];
     const edades_raw = String(req.query.edades_ninos || "");
-    const edades_ninos = (edades_raw.match(/\d+/g) || []).map((x) =>
-      parseInt(x, 10)
-    );
+    if (edades_raw) {
+      edades_ninos = (edades_raw.match(/\d+/g) || []).map((x) => parseInt(x, 10));
+    }
+    while (edades_ninos.length < ninos) {
+      edades_ninos.push(10); // default para niños
+    }
 
     if (!check_in || !check_out) {
       return res.status(400).json({
@@ -272,9 +277,19 @@ app.get("/debug", async (req, res) => {
     const check_out = req.query.check_out || "2025-09-25";
     const adultos = parseIntSafe(req.query.adultos, 2);
     const ninos = parseIntSafe(req.query.ninos, 0);
-    const noches = nightsBetween(check_in, check_out);
 
-    const targetUrl = buildTargetUrl(check_in, check_out, adultos, ninos, []);
+    // 👇 Nuevo: autocompletar edades de niños si faltan
+    let edades_ninos = [];
+    const edades_raw = String(req.query.edades_ninos || "");
+    if (edades_raw) {
+      edades_ninos = (edades_raw.match(/\d+/g) || []).map((x) => parseInt(x, 10));
+    }
+    while (edades_ninos.length < ninos) {
+      edades_ninos.push(10);
+    }
+
+    const noches = nightsBetween(check_in, check_out);
+    const targetUrl = buildTargetUrl(check_in, check_out, adultos, ninos, edades_ninos);
     const html = await fetchSearchHtml(targetUrl);
     const habitaciones = parseRooms(html, noches);
 
@@ -293,6 +308,11 @@ app.get("/debug", async (req, res) => {
       : undefined;
     res.status(500).json({ error: String(e?.message || e), status, body });
   }
+});
+
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server on http://0.0.0.0:${PORT} (useScraper=${useScraper})`);
 });
 
 const PORT = process.env.PORT || 8000;
